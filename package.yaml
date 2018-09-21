@@ -1,0 +1,50 @@
+name:                ellet-l
+version:             0.1.0.0
+github:              "elpinal/ellet-l"
+license:             MIT
+author:              "El Pin Al"
+maintainer:          ""
+copyright:           "2018 El Pin Al"
+
+extra-source-files:
+- README.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/elpinal/ellet-l#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- containers >= 0.5.11.0
+- safe-exceptions >= 0.1.7.0
+- transformers >= 0.5.5.0
+
+library:
+  source-dirs: src
+
+executables:
+  ellet-l-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - ellet-l
+
+tests:
+  ellet-l-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - ellet-l
