@@ -86,6 +86,7 @@ valueOf :: MonadThrow m => Operand -> Interpreter m Val
 valueOf (Register r) = lookupReg r
 valueOf (Int i) = return $ VInt i
 valueOf (Func cl) = return $ VCLab cl
+valueOf (TApp op _) = valueOf op
 valueOf (Pack _ op _) = valueOf op
 valueOf (Fold _ op) = valueOf op
 valueOf (Unfold op) = valueOf op

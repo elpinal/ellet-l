@@ -26,8 +26,9 @@ data Operand
   = Register Reg
   | Int Int
   | Func CLab
-  | Pack Type Operand Type -- pack [rep, op] as ty
-  | Fold Type Operand -- fold [ty] op
+  | TApp Operand LType -- op [ty]
+  | Pack LType Operand LType -- pack [rep, op] as ty
+  | Fold LType Operand -- fold [ty] op
   | Unfold Operand -- unfold op
 
 data Offset
