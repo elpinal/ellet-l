@@ -54,7 +54,7 @@ data Block = Block [Inst] Terminator
 newtype Context = Context { getContext :: Map.Map Reg LType }
 
 data Type
-  = Forall Type
+  = Forall String Type
   | TInt
   | Word
   | Code Context
@@ -64,7 +64,7 @@ data LType
   | Type Type
   | Nullable MType
   | Ref MType
-  | Exist LType
-  | Rec LType
+  | Exist String LType
+  | Rec String LType
 
 data MType = MType LType LType
