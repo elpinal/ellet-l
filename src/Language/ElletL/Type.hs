@@ -77,8 +77,11 @@ expectCode (Code _) = return ()
 expectCode (Forall _ t) = expectCode t
 expectCode t = throwP $ NotCodeType t
 
-typeOfReg :: Reg -> TypeChecker LType
-typeOfReg r = TypeChecker (lift get) >>= maybe (throwP $ NoSuchRegister r) return . Map.lookup r . getContext
+class Typed a where
+  typeOf :: a -> TypeChecker LType
+
+instance Typed Reg where
+  typeOf r = TypeChecker (lift get) >>= maybe (throwP $ NoSuchRegister r) return . Map.lookup r . getContext
 
 remove :: Reg -> Context -> Context
 remove r (Context m) = Context $ Map.delete r m
@@ -87,14 +90,14 @@ use :: Reg -> LType -> TypeChecker ()
 use _ (Type _) = return ()
 use r _ = TypeChecker $ lift $ modify $ remove r
 
-typeOf :: Operand -> TypeChecker LType
-typeOf (Register r)     = typeOfReg r >>= (<$) <*> use r -- Note that registers can be typed also as Word.
-typeOf (Int _)          = return $ Type TInt
-typeOf (Func cl)        = fmap Type $ TypeChecker (lift $ lift $ asks $ Map.lookup cl . getSig) >>= maybe (throwP $ NoSuchCodeLabel cl) return
-typeOf (TApp op lt)     = whLType lt >> typeOf op >>= instantiate lt
-typeOf (Pack rep op lt) = mustIdentical <$> ((`substTop` rep) <$> fromExist lt) <*> typeOf op >>= id >> return lt
-typeOf (Fold lt op)     = mustIdentical <$> ((`substTop` lt) <$> fromRec lt) <*> typeOf op >>= id >> return lt
-typeOf (Unfold op)      = typeOf op >>= fmap <$> flip substTop <*> fromRec
+instance Typed Operand where
+  typeOf (Register r)     = typeOf r >>= (<$) <*> use r -- Note that registers can be typed also as Word.
+  typeOf (Int _)          = return $ Type TInt
+  typeOf (Func cl)        = fmap Type $ TypeChecker (lift $ lift $ asks $ Map.lookup cl . getSig) >>= maybe (throwP $ NoSuchCodeLabel cl) return
+  typeOf (TApp op lt)     = whLType lt >> typeOf op >>= instantiate lt
+  typeOf (Pack rep op lt) = mustIdentical <$> ((`substTop` rep) <$> fromExist lt) <*> typeOf op >>= id >> return lt
+  typeOf (Fold lt op)     = mustIdentical <$> ((`substTop` lt) <$> fromRec lt) <*> typeOf op >>= id >> return lt
+  typeOf (Unfold op)      = typeOf op >>= fmap <$> flip substTop <*> fromRec
 
 mustIdentical :: LType -> LType -> TypeChecker ()
 mustIdentical x y
