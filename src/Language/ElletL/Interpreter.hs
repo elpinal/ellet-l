@@ -86,6 +86,9 @@ valueOf :: MonadThrow m => Operand -> Interpreter m Val
 valueOf (Register r) = lookupReg r
 valueOf (Int i) = return $ VInt i
 valueOf (Func cl) = return $ VCLab cl
+valueOf (Pack _ op _) = valueOf op
+valueOf (Fold _ op) = valueOf op
+valueOf (Unfold op) = valueOf op
 
 writeReg :: MonadThrow m => Reg -> Val -> Interpreter m ()
 writeReg r v = lift $ modify $ updateFile $ mapFile $ Map.insert r v
@@ -132,6 +135,7 @@ interp (Bnz r op) = do
   when (i /= 0) $ do
     jmp op >>= interpret
     ContT $ const $ return ()
+interp (Unpack _ r op) = valueOf op >>= writeReg r -- same as Mov.
 
 arith :: MonadThrow m => (Int -> Int -> Int) -> Val -> Val -> Interpreter m Val
 arith f (VInt i1) (VInt i2) = return $ VInt $ i1 `f` i2

@@ -26,6 +26,9 @@ data Operand
   = Register Reg
   | Int Int
   | Func CLab
+  | Pack Type Operand Type -- pack [rep, op] as ty
+  | Fold Type Operand -- fold [ty] op
+  | Unfold Operand -- unfold op
 
 data Offset
   = Zero
@@ -39,6 +42,7 @@ data Inst
   | Ld Reg Reg Offset
   | St Reg Offset Reg
   | Bnz Reg Operand
+  | Unpack String Reg Operand -- unpack [a, r] op
 
 data Terminator
   = Jmp Operand
