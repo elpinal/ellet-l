@@ -53,12 +53,14 @@ data Block = Block [Inst] Terminator
 
 
 newtype Context = Context { getContext :: Map.Map Reg LType }
+  deriving (Eq, Show)
 
 data Type
   = Forall String Type
   | TInt
   | Word
   | Code Context
+  deriving (Eq, Show)
 
 data LType
   = TVar Int
@@ -67,5 +69,7 @@ data LType
   | Ref MType
   | Exist String LType
   | Rec String LType
+  deriving (Eq, Show)
 
 data MType = MType LType LType
+  deriving (Eq, Show)
