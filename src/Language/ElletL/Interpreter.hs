@@ -1,4 +1,4 @@
-{-# Language GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Language.ElletL.Interpreter
   ( interpretProgram
