@@ -75,7 +75,7 @@ whSig = (TypeChecker . lift . lift . asks) (Map.elems . getSig) >>= mapM_ (\t ->
 expectCode :: Type -> TypeChecker ()
 expectCode (Code _) = return ()
 expectCode (Forall _ t) = expectCode t
-expectCode t = throwP $ NotCodeType t
+expectCode t = throwP $ NonCodeLabelType t
 
 class Typed a where
   typeOf :: a -> TypeChecker LType
@@ -203,20 +203,24 @@ data Error = Error [Reason] Problem
 
 data Problem
   = UnboundTypeVariable TypeContext Int
-  | UnexpectedMinus Int
-  | NonContractiveRecType String -- @rec X. X@ is ill-formed.
-  | NotCodeType Type
   | NoSuchRegister Reg
   | NoSuchCodeLabel CLab
-  | NonPolymorphicType LType
+
+  | UnexpectedMinus Int
+
+  | Conditional LType -- the conditional of "bnz" instruction should be an integer or a nullable reference.
+
+  | ContextMismatch Context Context
   | NotIdentical LType LType
+
+  | NonPolymorphicType LType
   | NonExistentialType LType
+  | NonContractiveRecType String -- @rec X. X@ is ill-formed.
   | NonRecursiveType LType
   | NonUnrestrictedType LType
   | NonIntType LType
-  | NonCodeType LType
+  | NonCodeType LType -- expected @Type (Code ctx)@
+  | NonCodeLabelType Type -- expected @Type (Forall ... (Code ctx))@
   | NonReferenceType LType
-  | Conditional LType -- the conditional of "bnz" instruction should be an integer or a nullable reference.
-  | ContextMismatch Context Context
 
 data Reason
