@@ -38,7 +38,7 @@ invert (TypeContext xs) = TypeContext $ map f xs
     f Minus = Plus
     f Neutral = Neutral
 
--- In the following, "wh" stands for "well-formed".
+-- In the following, "wf" stands for "well-formed".
 
 newtype TypeChecker a = TypeChecker { runTypeChecker :: ReaderT TypeContext (StateT Context (ReaderT Sig (Either Error))) a }
   deriving (Functor, Applicative, Monad)
@@ -46,31 +46,34 @@ newtype TypeChecker a = TypeChecker { runTypeChecker :: ReaderT TypeContext (Sta
 localT :: (TypeContext -> TypeContext) -> TypeChecker a -> TypeChecker a
 localT f (TypeChecker m) = TypeChecker $ local f m
 
-whType :: Type -> TypeChecker ()
-whType (Forall _ t) = localT (push Neutral) $ whType t
-whType TInt = return ()
-whType Word = return ()
-whType (Code ctx) = localT invert $ mapM_ whLType $ Map.elems $ getContext ctx
+class WellFormed a where
+  wf :: a -> TypeChecker ()
 
-whLType :: LType -> TypeChecker ()
-whLType (TVar i) = TypeChecker ask >>= getSign i >>= f
-  where
-    f Minus = throwP $ UnexpectedMinus i
-    f _ = return ()
-whLType (Type t) = whType t
-whLType (Nullable mt) = whMType mt
-whLType (Ref mt) = whMType mt
-whLType (Exist _ lt) = localT (push Neutral) $ whLType lt
-whLType (Rec s (TVar 0)) = throwP $ NonContractiveRecType s
-whLType (Rec _ lt) = localT (push Plus) $ whLType lt
+instance WellFormed Type where
+  wf (Forall _ t) = localT (push Neutral) $ wf t
+  wf TInt = return ()
+  wf Word = return ()
+  wf (Code ctx) = localT invert $ mapM_ wf $ Map.elems $ getContext ctx
 
-whMType :: MType -> TypeChecker ()
-whMType (MType lt1 lt2) = mapM_ whLType [lt1, lt2]
+instance WellFormed LType where
+  wf (TVar i) = TypeChecker ask >>= getSign i >>= f
+    where
+      f Minus = throwP $ UnexpectedMinus i
+      f _ = return ()
+  wf (Type t) = wf t
+  wf (Nullable mt) = wf mt
+  wf (Ref mt) = wf mt
+  wf (Exist _ lt) = localT (push Neutral) $ wf lt
+  wf (Rec s (TVar 0)) = throwP $ NonContractiveRecType s
+  wf (Rec _ lt) = localT (push Plus) $ wf lt
+
+instance WellFormed MType where
+  wf (MType lt1 lt2) = mapM_ wf [lt1, lt2]
 
 newtype Sig = Sig { getSig :: Map.Map CLab Type }
 
-whSig :: TypeChecker ()
-whSig = (TypeChecker . lift . lift . asks) (Map.elems . getSig) >>= mapM_ (\t -> expectCode t >> whType t)
+wfSig :: TypeChecker ()
+wfSig = (TypeChecker . lift . lift . asks) (Map.elems . getSig) >>= mapM_ (\t -> expectCode t >> wf t)
 
 expectCode :: Type -> TypeChecker ()
 expectCode (Code _) = return ()
@@ -91,7 +94,7 @@ instance Typed Operand where
   typeOf (Register r)     = typeOf r >>= (<$) <*> use r
   typeOf (Int _)          = return $ Type TInt
   typeOf (Func cl)        = fmap Type $ TypeChecker (lift $ lift $ asks $ Map.lookup cl . getSig) >>= maybe (throwP $ NoSuchCodeLabel cl) return
-  typeOf (TApp op lt)     = whLType lt >> typeOf op >>= instantiate lt
+  typeOf (TApp op lt)     = wf lt >> typeOf op >>= instantiate lt
   typeOf (Pack rep op lt) = mustIdentical <$> ((`substTop` rep) <$> fromExist lt) <*> typeOf op >>= id >> return lt
   typeOf (Fold lt op)     = mustIdentical <$> ((`substTop` lt) <$> fromRec lt) <*> typeOf op >>= id >> return lt
   typeOf (Unfold op)      = typeOf op >>= fmap <$> flip substTop <*> fromRec
@@ -120,22 +123,22 @@ insert r lt (Context m) = Context $ Map.insert r lt m
 updateReg :: Reg -> LType -> TypeChecker ()
 updateReg r lt = TypeChecker $ lift $ modify $ insert r lt
 
-whInst :: Inst -> TypeChecker ()
-whInst (Mov r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= updateReg r
-whInst (Add r1 r2 op) = whArith r1 r2 op
-whInst (Sub r1 r2 op) = whArith r1 r2 op
-whInst (Mul r1 r2 op) = whArith r1 r2 op
-whInst (Ld r1 r2 off) = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= withRef off (updateReg r1) (updateReg r2)
-whInst (St r1 off r2) = store off <$> typeOf r1 <*> typeOf r2 >>= id >>= updateReg r1
-whInst (Bnz r op) = do
-  ltr <- typeOf r
-  jmpctx <- typeOf op >>= fromCode
-  currentctx <- TypeChecker $ lift get
-  case ltr of
-    Type TInt -> match currentctx jmpctx
-    Nullable mt -> match (insert r (Ref mt) currentctx) jmpctx
-    _ -> throwP $ Conditional ltr
-whInst (Unpack _ r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= fromExist >>= localT (push Neutral) . updateReg r
+instance WellFormed Inst where
+  wf (Mov r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= updateReg r
+  wf (Add r1 r2 op) = wfArith r1 r2 op
+  wf (Sub r1 r2 op) = wfArith r1 r2 op
+  wf (Mul r1 r2 op) = wfArith r1 r2 op
+  wf (Ld r1 r2 off) = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= withRef off (updateReg r1) (updateReg r2)
+  wf (St r1 off r2) = store off <$> typeOf r1 <*> typeOf r2 >>= id >>= updateReg r1
+  wf (Bnz r op) = do
+    ltr <- typeOf r
+    jmpctx <- typeOf op >>= fromCode
+    currentctx <- TypeChecker $ lift get
+    case ltr of
+      Type TInt -> match currentctx jmpctx
+      Nullable mt -> match (insert r (Ref mt) currentctx) jmpctx
+      _ -> throwP $ Conditional ltr
+  wf (Unpack _ r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= fromExist >>= localT (push Neutral) . updateReg r
 
 withRef :: Offset -> (LType -> TypeChecker ()) -> (LType -> TypeChecker ()) -> LType -> TypeChecker ()
 withRef Zero f g (Ref (MType x y)) = f x >> g (Ref $ MType (used x) y)
@@ -151,8 +154,8 @@ store Zero (Ref (MType _ y)) x = return $ Ref $ MType x y
 store One  (Ref (MType x _)) y = return $ Ref $ MType x y
 store _ lt _ = throwP $ NonReferenceType lt
 
-whArith :: Reg -> Reg -> Operand -> TypeChecker ()
-whArith r1 r2 op = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= fromInt >> typeOf op >>= fromInt >> updateReg r1 (Type TInt)
+wfArith :: Reg -> Reg -> Operand -> TypeChecker ()
+wfArith r1 r2 op = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= fromInt >> typeOf op >>= fromInt >> updateReg r1 (Type TInt)
 
 fromInt :: LType -> TypeChecker ()
 fromInt (Type TInt) = return ()
