@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Language.ElletL.Syntax
   ( Reg(..)
   , CLab(..)
@@ -12,6 +14,16 @@ module Language.ElletL.Syntax
   , Type(..)
   , LType(..)
   , MType(..)
+
+  -- * States
+  , Lab(..)
+  , Val(..)
+  , File(..)
+  , mapFile
+  , HVal(..)
+  , Heap(..)
+  , mapHeap
+  , CodeSec(..)
   ) where
 
 import qualified Data.Map.Lazy as Map
@@ -73,3 +85,29 @@ data LType
 
 data MType = MType LType LType
   deriving (Eq, Show)
+
+newtype Lab = Lab String
+  deriving (Eq, Ord, Show)
+
+data Val
+  = VInt Int
+  | VLab Lab
+  | VCLab CLab
+  deriving Show
+
+newtype File = File { unFile :: Map.Map Reg Val }
+  deriving (Show, Semigroup, Monoid)
+
+mapFile :: (Map.Map Reg Val -> Map.Map Reg Val) -> File -> File
+mapFile f = File . f . unFile
+
+data HVal = HVal Val Val
+  deriving Show
+
+newtype Heap = Heap { unHeap :: Map.Map Lab HVal }
+  deriving (Show, Semigroup, Monoid)
+
+mapHeap :: (Map.Map Lab HVal -> Map.Map Lab HVal) -> Heap -> Heap
+mapHeap f = Heap . f . unHeap
+
+newtype CodeSec = CodeSec { unCodeSec :: Map.Map CLab Block }

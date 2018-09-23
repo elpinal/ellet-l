@@ -1,14 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 module Language.ElletL.Interpreter
   ( interpretProgram
-  , CodeSec(..)
   , Env(..)
-  , Heap(..)
-  , File(..)
-  , Lab(..)
-  , Val(..)
-  , HVal(..)
   ) where
 
 import Control.Exception.Safe
@@ -21,8 +13,6 @@ import qualified Data.Map.Lazy as Map
 
 import Language.ElletL.Syntax
 
-newtype CodeSec = CodeSec { unCodeSec :: Map.Map CLab Block }
-
 lookupCLab :: MonadThrow m => CLab -> Interpreter m Block
 lookupCLab cl = lift (lift ask) >>= maybe (throwI $ NoSuchCLab cl) return . Map.lookup cl . unCodeSec
 
@@ -30,31 +20,13 @@ fromCLab :: MonadThrow m => Val -> Interpreter m CLab
 fromCLab (VCLab cl) = return cl
 fromCLab v = throwI $ ExpectedCLab v
 
-newtype Lab = Lab String
-  deriving (Eq, Ord, Show)
-
-data Val
-  = VInt Int
-  | VLab Lab
-  | VCLab CLab
-  deriving Show
-
 fromInt :: MonadThrow m => Val -> Interpreter m Int
 fromInt (VInt i) = return i
 fromInt v = throwI $ ExpectedInt v
 
-data HVal = HVal Val Val
-  deriving Show
-
 alterCell :: Offset -> Val -> HVal -> HVal
 alterCell Zero v (HVal _ v2) = HVal v v2
 alterCell One v (HVal v1 _) = HVal v1 v
-
-newtype Heap = Heap { unHeap :: Map.Map Lab HVal }
-  deriving (Show, Semigroup, Monoid)
-
-mapHeap :: (Map.Map Lab HVal -> Map.Map Lab HVal) -> Heap -> Heap
-mapHeap f = Heap . f . unHeap
 
 lookupLab :: MonadThrow m => Lab -> Interpreter m HVal
 lookupLab l = lift (gets heap) >>= maybe (throwI $ NoSuchLab l) return . Map.lookup l . unHeap
@@ -72,12 +44,6 @@ readHVal One (HVal _ v) = v
 
 writeHeap :: MonadThrow m => Lab -> HVal -> Interpreter m ()
 writeHeap l hv = lift $ modify $ updateHeap $ mapHeap $ Map.insert l hv
-
-newtype File = File { unFile :: Map.Map Reg Val }
-  deriving (Show, Semigroup, Monoid)
-
-mapFile :: (Map.Map Reg Val -> Map.Map Reg Val) -> File -> File
-mapFile f = File . f . unFile
 
 lookupReg :: MonadThrow m => Reg -> Interpreter m Val
 lookupReg r = lift (gets file) >>= maybe (throwI $ NoSuchRegister r) return . Map.lookup r . unFile
