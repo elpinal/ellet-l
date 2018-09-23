@@ -83,15 +83,12 @@ class Typed a where
 instance Typed Reg where
   typeOf r = TypeChecker (lift get) >>= maybe (throwP $ NoSuchRegister r) return . Map.lookup r . getContext
 
-remove :: Reg -> Context -> Context
-remove r (Context m) = Context $ Map.delete r m
-
 use :: Reg -> LType -> TypeChecker ()
 use _ (Type _) = return ()
-use r _ = TypeChecker $ lift $ modify $ remove r
+use r _ = updateReg r $ Type Word
 
 instance Typed Operand where
-  typeOf (Register r)     = typeOf r >>= (<$) <*> use r -- Note that registers can be typed also as Word.
+  typeOf (Register r)     = typeOf r >>= (<$) <*> use r
   typeOf (Int _)          = return $ Type TInt
   typeOf (Func cl)        = fmap Type $ TypeChecker (lift $ lift $ asks $ Map.lookup cl . getSig) >>= maybe (throwP $ NoSuchCodeLabel cl) return
   typeOf (TApp op lt)     = whLType lt >> typeOf op >>= instantiate lt
