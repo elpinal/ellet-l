@@ -117,6 +117,61 @@ instantiate :: LType -> LType -> TypeChecker LType
 instantiate by (Type (Forall _ t)) = return $ Type $ substTop t by
 instantiate _ lt = throwP $ NonPolymorphicType lt
 
+insert :: Reg -> LType -> Context -> Context
+insert r lt (Context m) = Context $ Map.insert r lt m
+
+updateReg :: Reg -> LType -> TypeChecker ()
+updateReg r lt = TypeChecker $ lift $ modify $ insert r lt
+
+whInst :: Inst -> TypeChecker ()
+whInst (Mov r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= updateReg r
+whInst (Add r1 r2 op) = whArith r1 r2 op
+whInst (Sub r1 r2 op) = whArith r1 r2 op
+whInst (Mul r1 r2 op) = whArith r1 r2 op
+whInst (Ld r1 r2 off) = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= withRef off (updateReg r1) (updateReg r2)
+whInst (St r1 off r2) = store off <$> typeOf r1 <*> typeOf r2 >>= id >>= updateReg r1
+whInst (Bnz r op) = do
+  ltr <- typeOf r
+  jmpctx <- typeOf op >>= fromCode
+  currentctx <- TypeChecker $ lift get
+  case ltr of
+    Type TInt -> match currentctx jmpctx
+    Nullable mt -> match (insert r (Ref mt) currentctx) jmpctx
+    _ -> throwP $ Conditional ltr
+whInst (Unpack _ r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= fromExist >>= localT (push Neutral) . updateReg r
+
+withRef :: Offset -> (LType -> TypeChecker ()) -> (LType -> TypeChecker ()) -> LType -> TypeChecker ()
+withRef Zero f g (Ref (MType x y)) = f x >> g (Ref $ MType (used x) y)
+withRef One  f g (Ref (MType x y)) = f y >> g (Ref $ MType x $ used y)
+withRef _ _ _ lt = throwP $ NonReferenceType lt
+
+used :: LType -> LType
+used (Type t) = Type t
+used _ = Type Word
+
+store :: Offset -> LType -> LType -> TypeChecker LType
+store Zero (Ref (MType _ y)) x = return $ Ref $ MType x y
+store One  (Ref (MType x _)) y = return $ Ref $ MType x y
+store _ lt _ = throwP $ NonReferenceType lt
+
+whArith :: Reg -> Reg -> Operand -> TypeChecker ()
+whArith r1 r2 op = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= fromInt >> typeOf op >>= fromInt >> updateReg r1 (Type TInt)
+
+fromInt :: LType -> TypeChecker ()
+fromInt (Type TInt) = return ()
+fromInt lt = throwP $ NonIntType lt
+
+fromUnrestricted :: LType -> TypeChecker Type
+fromUnrestricted (Type t) = return t
+fromUnrestricted lt = throwP $ NonUnrestrictedType lt
+
+fromCode :: LType -> TypeChecker Context
+fromCode (Type (Code ctx)) = return ctx
+fromCode lt = throwP $ NonCodeType lt
+
+match :: Context -> Context -> TypeChecker ()
+match x y = if identical x y then return () else throwP $ ContextMismatch x y
+
 -- | @identical x y@ returns @True@ if and only if the two terms are alpha-equivalent.
 class Identical a where
   identical :: a -> a -> Bool
@@ -160,5 +215,11 @@ data Problem
   | NotIdentical LType LType
   | NonExistentialType LType
   | NonRecursiveType LType
+  | NonUnrestrictedType LType
+  | NonIntType LType
+  | NonCodeType LType
+  | NonReferenceType LType
+  | Conditional LType -- the conditional of "bnz" instruction should be an integer or a nullable reference.
+  | ContextMismatch Context Context
 
 data Reason
