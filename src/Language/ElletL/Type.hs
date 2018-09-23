@@ -123,6 +123,16 @@ insert r lt (Context m) = Context $ Map.insert r lt m
 updateReg :: Reg -> LType -> TypeChecker ()
 updateReg r lt = TypeChecker $ lift $ modify $ insert r lt
 
+currentContext :: TypeChecker Context
+currentContext = TypeChecker $ lift get
+
+instance WellFormed Block where
+  wf (Block is t) = mapM_ wf is >> wf t
+
+instance WellFormed Terminator where
+  wf (Jmp op) = match <$> currentContext <*> (typeOf op >>= fromCode) >>= id
+  wf Halt = return ()
+
 instance WellFormed Inst where
   wf (Mov r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= updateReg r
   wf (Add r1 r2 op) = wfArith r1 r2 op
@@ -133,7 +143,7 @@ instance WellFormed Inst where
   wf (Bnz r op) = do
     ltr <- typeOf r
     jmpctx <- typeOf op >>= fromCode
-    currentctx <- TypeChecker $ lift get
+    currentctx <- currentContext
     case ltr of
       Type TInt -> match currentctx jmpctx
       Nullable mt -> match (insert r (Ref mt) currentctx) jmpctx
