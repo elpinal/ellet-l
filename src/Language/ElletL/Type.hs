@@ -137,21 +137,19 @@ instance WellFormed Terminator where
   wf Halt = return ()
 
 instance WellFormed Inst where
-  wf (Mov r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= updateReg r
-  wf (Add r1 r2 op) = wfArith r1 r2 op
-  wf (Sub r1 r2 op) = wfArith r1 r2 op
-  wf (Mul r1 r2 op) = wfArith r1 r2 op
-  wf (Ld r1 r2 off) = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= withRef off (updateReg r1) (updateReg r2)
-  wf (St r1 off r2) = store off <$> typeOf r1 <*> typeOf r2 >>= id >>= updateReg r1
-  wf (Bnz r op) = do
-    ltr <- typeOf r
-    jmpctx <- typeOf op >>= fromCode
-    currentctx <- currentContext
-    case ltr of
-      Type TInt -> match currentctx jmpctx
-      Nullable mt -> match (insert r (Ref mt) currentctx) jmpctx
-      _ -> throwP $ Conditional ltr
+  wf (Mov r op)      = typeOf r >>= fromUnrestricted >> typeOf op >>= updateReg r
+  wf (Add r1 r2 op)  = wfArith r1 r2 op
+  wf (Sub r1 r2 op)  = wfArith r1 r2 op
+  wf (Mul r1 r2 op)  = wfArith r1 r2 op
+  wf (Ld r1 r2 off)  = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= withRef off (updateReg r1) (updateReg r2)
+  wf (St r1 off r2)  = store off <$> typeOf r1 <*> typeOf r2 >>= id >>= updateReg r1
+  wf (Bnz r op)      = match <$> ((typeOf r >>= cond r) <*> currentContext) <*> (typeOf op >>= fromCode) >>= id
   wf (Unpack _ r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= fromExist >>= (shiftContext >>) . localT (push Neutral) . updateReg r
+
+cond :: Reg -> LType -> TypeChecker (Context -> Context)
+cond _ (Type TInt)   = return id
+cond r (Nullable mt) = return $ insert r $ Ref mt
+cond _ ltr           = throwP $ Conditional ltr
 
 withRef :: Offset -> (LType -> TypeChecker ()) -> (LType -> TypeChecker ()) -> LType -> TypeChecker ()
 withRef Zero f g (Ref (MType x y)) = f x >> g (Ref $ MType (used x) y)
