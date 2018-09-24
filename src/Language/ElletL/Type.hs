@@ -126,6 +126,9 @@ updateReg r lt = TypeChecker $ lift $ modify $ insert r lt
 currentContext :: TypeChecker Context
 currentContext = TypeChecker $ lift get
 
+shiftContext :: TypeChecker ()
+shiftContext = TypeChecker $ lift $ modify $ shift 1
+
 instance WellFormed Block where
   wf (Block is t) = mapM_ wf is >> wf t
 
@@ -148,7 +151,7 @@ instance WellFormed Inst where
       Type TInt -> match currentctx jmpctx
       Nullable mt -> match (insert r (Ref mt) currentctx) jmpctx
       _ -> throwP $ Conditional ltr
-  wf (Unpack _ r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= fromExist >>= localT (push Neutral) . updateReg r
+  wf (Unpack _ r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= fromExist >>= (shiftContext >>) . localT (push Neutral) . updateReg r
 
 withRef :: Offset -> (LType -> TypeChecker ()) -> (LType -> TypeChecker ()) -> LType -> TypeChecker ()
 withRef Zero f g (Ref (MType x y)) = f x >> g (Ref $ MType (used x) y)

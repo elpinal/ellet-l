@@ -2,6 +2,9 @@
 
 module Language.ElletL.Subst
   ( substTop
+  , subst
+  , shift
+  , shiftAbove
   ) where
 
 import Control.Monad.Free
