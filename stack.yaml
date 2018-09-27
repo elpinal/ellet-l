@@ -65,4 +65,4 @@ packages:
 # compiler-check: newer-minor
 
 ghc-options:
-  "$locals": -Wall -Werror=overflowed-literals
+  "$locals": -Wall -Werror=overflowed-literals -Wno-simplifiable-class-constraints
