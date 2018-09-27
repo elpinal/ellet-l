@@ -46,6 +46,9 @@ newtype TypeChecker a = TypeChecker { runTypeChecker :: ReaderT TypeContext (Sta
 localT :: (TypeContext -> TypeContext) -> TypeChecker a -> TypeChecker a
 localT f (TypeChecker m) = TypeChecker $ local f m
 
+liftS :: ReaderT Sig (Either Error) a -> TypeChecker a
+liftS = TypeChecker . lift . lift
+
 class WellFormed a where
   wf :: a -> TypeChecker ()
 
@@ -76,7 +79,7 @@ lookupSig :: CLab -> Sig -> Maybe Type
 lookupSig cl (Sig m) = Map.lookup cl m
 
 wfSig :: TypeChecker ()
-wfSig = (TypeChecker . lift . lift . asks) (Map.elems . getSig) >>= mapM_ (\t -> expectCode t >> wf t)
+wfSig = liftS ask >>= mapM_ (\t -> expectCode t >> wf t) . Map.elems . getSig
 
 expectCode :: Type -> TypeChecker ()
 expectCode (Code _) = return ()
@@ -103,7 +106,7 @@ checkContext ctx (r, v) = do
 checkValue :: Val -> LType -> WithHeap ()
 checkValue (VInt n) lt = checkInt n lt
 checkValue (VCLab cl) lt = lift $ do
-  sig <- TypeChecker $ lift $ lift $ ask
+  sig <- liftS ask
   t <- lookupSig cl sig !? NoSuchCodeLabel cl
   mustIdentical (Type t) lt
 checkValue (VLab l) lt = useLabel l >>= (`checkHeapValue` lt)
@@ -148,7 +151,7 @@ use r _ = updateReg r $ Type Word
 instance Typed Operand where
   typeOf (Register r)     = typeOf r >>= (<$) <*> use r
   typeOf (Int _)          = return $ Type TInt
-  typeOf (Func cl)        = fmap Type $ TypeChecker (lift $ lift $ asks $ Map.lookup cl . getSig) >>= maybe (throwP $ NoSuchCodeLabel cl) return
+  typeOf (Func cl)        = fmap Type $ liftS ask >>= \sig -> lookupSig cl sig !? NoSuchCodeLabel cl
   typeOf (TApp op lt)     = wf lt >> typeOf op >>= instantiate lt
   typeOf (Pack rep op lt) = mustIdentical <$> ((`substTop` rep) <$> fromExist lt) <*> typeOf op >>= id >> return lt
   typeOf (Fold lt op)     = mustIdentical <$> ((`substTop` lt) <$> fromRec lt) <*> typeOf op >>= id >> return lt
