@@ -11,6 +11,7 @@ module Language.ElletL.Syntax
 
   -- * Types
   , Context(..)
+  , lookupContext
   , Type(..)
   , LType(..)
   , MType(..)
@@ -66,6 +67,9 @@ data Block = Block [Inst] Terminator
 
 newtype Context = Context { getContext :: Map.Map Reg LType }
   deriving (Eq, Show)
+
+lookupContext :: Reg -> Context -> Maybe LType
+lookupContext r (Context m) = Map.lookup r m
 
 data Type
   = Forall String Type

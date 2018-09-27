@@ -72,6 +72,9 @@ instance WellFormed MType where
 
 newtype Sig = Sig { getSig :: Map.Map CLab Type }
 
+lookupSig :: CLab -> Sig -> Maybe Type
+lookupSig cl (Sig m) = Map.lookup cl m
+
 wfSig :: TypeChecker ()
 wfSig = (TypeChecker . lift . lift . asks) (Map.elems . getSig) >>= mapM_ (\t -> expectCode t >> wf t)
 
@@ -79,6 +82,58 @@ expectCode :: Type -> TypeChecker ()
 expectCode (Code _) = return ()
 expectCode (Forall _ t) = expectCode t
 expectCode t = throwP $ NonCodeLabelType t
+
+checkFileAndHeap :: File -> Context -> Heap -> TypeChecker ()
+checkFileAndHeap file ctx heap = do
+  heap' <- execStateT (check file ctx) heap
+  if Map.null $ unHeap heap'
+    then return ()
+    else throwP $ UnusedLabels heap'
+
+type WithHeap = StateT Heap TypeChecker
+
+check :: File -> Context -> WithHeap ()
+check file ctx = mapM_ (checkContext ctx) $ Map.toList $ unFile file
+
+checkContext :: Context -> (Reg, Val) -> WithHeap ()
+checkContext ctx (r, v) = do
+  lt <- lift $ lookupContext r ctx !? NoSuchRegister r
+  checkValue v lt
+
+checkValue :: Val -> LType -> WithHeap ()
+checkValue (VInt n) lt = checkInt n lt
+checkValue (VCLab cl) lt = lift $ do
+  sig <- TypeChecker $ lift $ lift $ ask
+  t <- lookupSig cl sig !? NoSuchCodeLabel cl
+  mustIdentical (Type t) lt
+checkValue (VLab l) lt = useLabel l >>= (`checkHeapValue` lt)
+
+checkHeapValue :: HVal -> LType -> WithHeap ()
+checkHeapValue (HVal v1 v2) (Ref (MType lt1 lt2)) = checkValue v1 lt1 >> checkValue v2 lt2
+checkHeapValue _ lt = lift $ throwP $ NonReferenceType lt
+
+data LookupLabel a
+  = Found HVal a
+  | Missing
+  deriving Functor
+
+lookupHeap :: Lab -> Heap -> LookupLabel Heap
+lookupHeap l (Heap m) = Heap <$> Map.alterF (maybe Missing (`Found` Nothing)) l m
+
+useLabel :: Lab -> WithHeap HVal
+useLabel l = do
+  ll <- gets $ lookupHeap l
+  case ll of
+    Found hv heap -> put heap >> return hv
+    Missing -> lift $ throwP $ UsedOrUnboundLabel l
+
+checkInt :: Int -> LType -> WithHeap ()
+checkInt 0 (Nullable mt) = lift $ wf mt
+checkInt _ (Type TInt) = return ()
+checkInt n lt = lift $ throwP $ IllTypedIntValue n lt
+
+(!?) :: Maybe a -> Problem -> TypeChecker a
+(!?) m p = maybe (throwP p) return m
 
 class Typed a where
   typeOf :: a -> TypeChecker LType
@@ -217,8 +272,11 @@ data Error = Error [Reason] Problem
 
 data Problem
   = UnboundTypeVariable TypeContext Int
-  | NoSuchRegister Reg
+  | UsedOrUnboundLabel Lab -- the label is either used twice (or more), or unbound in the heap.
+  | NoSuchRegister Reg -- no such register in the context.
   | NoSuchCodeLabel CLab
+
+  | UnusedLabels Heap -- forgetting labels, which contain linear values, is forbidden in the linear type system.
 
   | UnexpectedMinus Int
 
@@ -236,5 +294,7 @@ data Problem
   | NonCodeType LType -- expected @Type (Code ctx)@
   | NonCodeLabelType Type -- expected @Type (Forall ... (Code ctx))@
   | NonReferenceType LType
+
+  | IllTypedIntValue Int LType
 
 data Reason
