@@ -115,18 +115,21 @@ checkHeapValue :: HVal -> LType -> WithHeap ()
 checkHeapValue (HVal v1 v2) (Ref (MType lt1 lt2)) = checkValue v1 lt1 >> checkValue v2 lt2
 checkHeapValue _ lt = lift $ throwP $ NonReferenceType lt
 
-data LookupLabel a
-  = Found HVal a
+data Drop d a
+  = Found d a
   | Missing
   deriving Functor
 
-lookupHeap :: Lab -> Heap -> LookupLabel Heap
-lookupHeap l (Heap m) = Heap <$> Map.alterF (maybe Missing (`Found` Nothing)) l m
+dropMap :: Ord k => k -> Map.Map k a -> Drop a (Map.Map k a)
+dropMap k m = Map.alterF (maybe Missing (`Found` Nothing)) k m
+
+dropLabel :: Lab -> Heap -> Drop HVal Heap
+dropLabel l (Heap m) = Heap <$> dropMap l m
 
 useLabel :: Lab -> WithHeap HVal
 useLabel l = do
-  ll <- gets $ lookupHeap l
-  case ll of
+  d <- gets $ dropLabel l
+  case d of
     Found hv heap -> put heap >> return hv
     Missing -> lift $ throwP $ UsedOrUnboundLabel l
 
