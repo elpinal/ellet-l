@@ -4,7 +4,7 @@
 module Language.ElletL.Type
   ( TypeChecker(..)
   -- * Errors
-  , Error(..)
+  , TypeError(..)
   ) where
 
 import Control.Monad.Trans.Class
@@ -40,13 +40,13 @@ invert (TypeContext xs) = TypeContext $ map f xs
 
 -- In the following, "wf" stands for "well-formed".
 
-newtype TypeChecker a = TypeChecker { runTypeChecker :: ReaderT TypeContext (StateT Context (ReaderT Sig (Either Error))) a }
+newtype TypeChecker a = TypeChecker { runTypeChecker :: ReaderT TypeContext (StateT Context (ReaderT Sig (Either TypeError))) a }
   deriving (Functor, Applicative, Monad)
 
 localT :: (TypeContext -> TypeContext) -> TypeChecker a -> TypeChecker a
 localT f (TypeChecker m) = TypeChecker $ local f m
 
-liftS :: ReaderT Sig (Either Error) a -> TypeChecker a
+liftS :: ReaderT Sig (Either TypeError) a -> TypeChecker a
 liftS = TypeChecker . lift . lift
 
 class WellFormed a where
@@ -268,13 +268,13 @@ instance Identical LType where
 instance Identical MType where
   identical (MType x1 x2) (MType y1 y2) = identical x1 y1 && identical x2 y2
 
-throwT :: Error -> TypeChecker a
+throwT :: TypeError -> TypeChecker a
 throwT = TypeChecker . lift . lift . lift. Left
 
 throwP :: Problem -> TypeChecker a
-throwP = throwT . Error []
+throwP = throwT . TypeError []
 
-data Error = Error [Reason] Problem
+data TypeError = TypeError [Reason] Problem
 
 data Problem
   = UnboundTypeVariable TypeContext Int
