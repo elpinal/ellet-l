@@ -22,6 +22,7 @@ dependencies:
 - base >= 4.7 && < 5
 - containers >= 0.5.11.0
 - free >= 5.0.2
+- freer-simple >= 1.1.0.0
 - safe-exceptions >= 0.1.7.0
 - transformers >= 0.5.5.0
 

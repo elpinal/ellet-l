@@ -1,15 +1,18 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Language.ElletL.Type
-  ( TypeChecker(..)
+  ( Typed(..)
   -- * Errors
   , TypeError(..)
   ) where
 
-import Control.Monad.Trans.Class
-import Control.Monad.Trans.Reader
-import Control.Monad.Trans.State
+import Control.Monad.Freer
+import Control.Monad.Freer.Error
+import Control.Monad.Freer.Reader
+import Control.Monad.Freer.State
 import Data.Functor.Classes
 import qualified Data.Map.Lazy as Map
 
@@ -23,10 +26,10 @@ data Sign
 
 newtype TypeContext = TypeContext { getTypeContext :: [Sign] }
 
-getSign :: Int -> TypeContext -> TypeChecker Sign
+getSign :: Member (Error TypeError) r => Int -> TypeContext -> Eff r Sign
 getSign i (TypeContext xs)
   | 0 <= i && i < length xs = return $ xs !! i
-  | otherwise = throwP $ UnboundTypeVariable (TypeContext xs) i
+  | otherwise = throwErrorP $ UnboundTypeVariable (TypeContext xs) i
 
 push :: Sign -> TypeContext -> TypeContext
 push s (TypeContext xs) = TypeContext $ s : xs
@@ -40,35 +43,26 @@ invert (TypeContext xs) = TypeContext $ map f xs
 
 -- In the following, "wf" stands for "well-formed".
 
-newtype TypeChecker a = TypeChecker { runTypeChecker :: ReaderT TypeContext (StateT Context (ReaderT Sig (Either TypeError))) a }
-  deriving (Functor, Applicative, Monad)
-
-localT :: (TypeContext -> TypeContext) -> TypeChecker a -> TypeChecker a
-localT f (TypeChecker m) = TypeChecker $ local f m
-
-liftS :: ReaderT Sig (Either TypeError) a -> TypeChecker a
-liftS = TypeChecker . lift . lift
-
 class WellFormed a where
-  wf :: a -> TypeChecker ()
+  wf :: Members '[Reader TypeContext, Error TypeError] r => a -> Eff r ()
 
 instance WellFormed Type where
-  wf (Forall _ t) = localT (push Neutral) $ wf t
+  wf (Forall _ t) = local (push Neutral) $ wf t
   wf TInt = return ()
   wf Word = return ()
-  wf (Code ctx) = localT invert $ mapM_ wf $ Map.elems $ getContext ctx
+  wf (Code ctx) = local invert $ mapM_ wf $ Map.elems $ getContext ctx
 
 instance WellFormed LType where
-  wf (TVar i) = TypeChecker ask >>= getSign i >>= f
+  wf (TVar i) = ask >>= getSign i >>= f
     where
-      f Minus = throwP $ UnexpectedMinus i
+      f Minus = throwErrorP $ UnexpectedMinus i
       f _ = return ()
   wf (Type t) = wf t
   wf (Nullable mt) = wf mt
   wf (Ref mt) = wf mt
-  wf (Exist _ lt) = localT (push Neutral) $ wf lt
-  wf (Rec s (TVar 0)) = throwP $ NonContractiveRecType s
-  wf (Rec _ lt) = localT (push Plus) $ wf lt
+  wf (Exist _ lt) = local (push Neutral) $ wf lt
+  wf (Rec s (TVar 0)) = throwErrorP $ NonContractiveRecType s
+  wf (Rec _ lt) = local (push Plus) $ wf lt
 
 instance WellFormed MType where
   wf (MType lt1 lt2) = mapM_ wf [lt1, lt2]
@@ -78,42 +72,40 @@ newtype Sig = Sig { getSig :: Map.Map CLab Type }
 lookupSig :: CLab -> Sig -> Maybe Type
 lookupSig cl (Sig m) = Map.lookup cl m
 
-wfSig :: TypeChecker ()
-wfSig = liftS ask >>= mapM_ (\t -> expectCode t >> wf t) . Map.elems . getSig
+wfSig :: Members '[Reader TypeContext, Error TypeError, Reader Sig] r => Eff r ()
+wfSig = ask >>= mapM_ (\t -> expectCode t >> wf t) . Map.elems . getSig
 
-expectCode :: Type -> TypeChecker ()
+expectCode :: (Member (Error TypeError) r) => Type -> Eff r ()
 expectCode (Code _) = return ()
 expectCode (Forall _ t) = expectCode t
-expectCode t = throwP $ NonCodeLabelType t
+expectCode t = throwErrorP $ NonCodeLabelType t
 
-checkFileAndHeap :: File -> Context -> Heap -> TypeChecker ()
+checkFileAndHeap :: Members '[Reader Sig, Error TypeError] r => File -> Context -> Heap -> Eff r ()
 checkFileAndHeap file ctx heap = do
-  heap' <- execStateT (check file ctx) heap
+  heap' <- execState heap $ check file ctx
   if Map.null $ unHeap heap'
     then return ()
-    else throwP $ UnusedLabels heap'
+    else throwErrorP $ UnusedLabels heap'
 
-type WithHeap = StateT Heap TypeChecker
-
-check :: File -> Context -> WithHeap ()
+check :: Members '[State Heap, Reader Sig, Error TypeError] r => File -> Context -> Eff r ()
 check file ctx = mapM_ (checkContext ctx) $ Map.toList $ unFile file
 
-checkContext :: Context -> (Reg, Val) -> WithHeap ()
+checkContext :: Members '[State Heap, Reader Sig, Error TypeError] r => Context -> (Reg, Val) -> Eff r ()
 checkContext ctx (r, v) = do
-  lt <- lift $ lookupContext r ctx !? NoSuchRegister r
+  lt <- lookupContext r ctx !? NoSuchRegister r
   checkValue v lt
 
-checkValue :: Val -> LType -> WithHeap ()
+checkValue :: Members '[State Heap, Reader Sig, Error TypeError] r => Val -> LType -> Eff r ()
 checkValue (VInt n) lt = checkInt n lt
-checkValue (VCLab cl) lt = lift $ do
-  sig <- liftS ask
+checkValue (VCLab cl) lt = do
+  sig <- ask
   t <- lookupSig cl sig !? NoSuchCodeLabel cl
   mustIdentical (Type t) lt
 checkValue (VLab l) lt = useLabel l >>= (`checkHeapValue` lt)
 
-checkHeapValue :: HVal -> LType -> WithHeap ()
+checkHeapValue :: Members '[State Heap, Reader Sig, Error TypeError] r => HVal -> LType -> Eff r ()
 checkHeapValue (HVal v1 v2) (Ref (MType lt1 lt2)) = checkValue v1 lt1 >> checkValue v2 lt2
-checkHeapValue _ lt = lift $ throwP $ NonReferenceType lt
+checkHeapValue _ lt = throwErrorP $ NonReferenceType lt
 
 data Drop d a
   = Found d a
@@ -126,123 +118,125 @@ dropMap k m = Map.alterF (maybe Missing (`Found` Nothing)) k m
 dropLabel :: Lab -> Heap -> Drop HVal Heap
 dropLabel l (Heap m) = Heap <$> dropMap l m
 
-useLabel :: Lab -> WithHeap HVal
+useLabel :: Members '[State Heap, Error TypeError] r => Lab -> Eff r HVal
 useLabel l = do
   d <- gets $ dropLabel l
   case d of
     Found hv heap -> put heap >> return hv
-    Missing -> lift $ throwP $ UsedOrUnboundLabel l
+    Missing -> throwErrorP $ UsedOrUnboundLabel l
 
-checkInt :: Int -> LType -> WithHeap ()
-checkInt 0 (Nullable mt) = lift $ wf mt
+checkInt :: Members '[Error TypeError] r => Int -> LType -> Eff r ()
+checkInt 0 (Nullable mt) = runReader (TypeContext []) $ wf mt
 checkInt _ (Type TInt) = return ()
-checkInt n lt = lift $ throwP $ IllTypedIntValue n lt
+checkInt n lt = throwErrorP $ IllTypedIntValue n lt
 
-(!?) :: Maybe a -> Problem -> TypeChecker a
-(!?) m p = maybe (throwP p) return m
+(!?) :: Member (Error TypeError) r => Maybe a -> Problem -> Eff r a
+(!?) m p = maybe (throwErrorP p) return m
+
+typeOfS :: (Typed a, Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r) => a -> Eff r LType
+typeOfS x = do
+  tctx <- get
+  runReader (tctx :: TypeContext) $ typeOf x
 
 class Typed a where
-  typeOf :: a -> TypeChecker LType
+  typeOf :: Members '[Reader TypeContext, State Context, Reader Sig, Error TypeError] r => a -> Eff r LType
 
 instance Typed Reg where
-  typeOf r = TypeChecker (lift get) >>= maybe (throwP $ NoSuchRegister r) return . Map.lookup r . getContext
+  typeOf r = gets getContext >>= maybe (throwErrorP $ NoSuchRegister r) return . Map.lookup r
 
-use :: Reg -> LType -> TypeChecker ()
+use :: Member (State Context) r => Reg -> LType -> Eff r ()
 use _ (Type _) = return ()
 use r _ = updateReg r $ Type Word
 
 instance Typed Operand where
   typeOf (Register r)     = typeOf r >>= (<$) <*> use r
   typeOf (Int _)          = return $ Type TInt
-  typeOf (Func cl)        = fmap Type $ liftS ask >>= \sig -> lookupSig cl sig !? NoSuchCodeLabel cl
+  typeOf (Func cl)        = fmap Type $ ask >>= \sig -> lookupSig cl sig !? NoSuchCodeLabel cl
   typeOf (TApp op lt)     = wf lt >> typeOf op >>= instantiate lt
   typeOf (Pack rep op lt) = mustIdentical <$> ((`substTop` rep) <$> fromExist lt) <*> typeOf op >>= id >> return lt
   typeOf (Fold lt op)     = mustIdentical <$> ((`substTop` lt) <$> fromRec lt) <*> typeOf op >>= id >> return lt
   typeOf (Unfold op)      = typeOf op >>= fmap <$> flip substTop <*> fromRec
 
-mustIdentical :: LType -> LType -> TypeChecker ()
+mustIdentical :: Member (Error TypeError) r => LType -> LType -> Eff r ()
 mustIdentical x y
   | identical x y = return ()
-  | otherwise = throwP $ NotIdentical x y
+  | otherwise = throwErrorP $ NotIdentical x y
 
 -- fromRec (rec X. T) == T.
-fromRec :: LType -> TypeChecker LType
+fromRec :: Member (Error TypeError) r => LType -> Eff r LType
 fromRec (Rec _ lt) = return lt
-fromRec lt = throwP $ NonRecursiveType lt
+fromRec lt = throwErrorP $ NonRecursiveType lt
 
-fromExist :: LType -> TypeChecker LType
+fromExist :: Member (Error TypeError) r => LType -> Eff r LType
 fromExist (Exist _ lt) = return lt
-fromExist lt = throwP $ NonExistentialType lt
+fromExist lt = throwErrorP $ NonExistentialType lt
 
-instantiate :: LType -> LType -> TypeChecker LType
+instantiate :: Member (Error TypeError) r => LType -> LType -> Eff r LType
 instantiate by (Type (Forall _ t)) = return $ Type $ substTop t by
-instantiate _ lt = throwP $ NonPolymorphicType lt
+instantiate _ lt = throwErrorP $ NonPolymorphicType lt
 
 insert :: Reg -> LType -> Context -> Context
 insert r lt (Context m) = Context $ Map.insert r lt m
 
-updateReg :: Reg -> LType -> TypeChecker ()
-updateReg r lt = TypeChecker $ lift $ modify $ insert r lt
+updateReg :: Member (State Context) r => Reg -> LType -> Eff r ()
+updateReg r lt = modify $ insert r lt
 
-currentContext :: TypeChecker Context
-currentContext = TypeChecker $ lift get
+shiftContext :: Member (State Context) r => Eff r ()
+shiftContext = modify $ (shift 1 :: Context -> Context)
 
-shiftContext :: TypeChecker ()
-shiftContext = TypeChecker $ lift $ modify $ shift 1
+wfB :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Block -> Eff r ()
+wfB (Block is t) = mapM_ wfInst is >> wfT t
 
-instance WellFormed Block where
-  wf (Block is t) = mapM_ wf is >> wf t
+wfT :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Terminator -> Eff r ()
+wfT (Jmp op) = match <$> get <*> (typeOfS op >>= fromCode) >>= id
+wfT Halt = return ()
 
-instance WellFormed Terminator where
-  wf (Jmp op) = match <$> currentContext <*> (typeOf op >>= fromCode) >>= id
-  wf Halt = return ()
+wfInst :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Inst -> Eff r ()
+wfInst (Mov r op)      = typeOfS r >>= fromUnrestricted >> typeOfS op >>= updateReg r
+wfInst (Add r1 r2 op)  = wfArith r1 r2 op
+wfInst (Sub r1 r2 op)  = wfArith r1 r2 op
+wfInst (Mul r1 r2 op)  = wfArith r1 r2 op
+wfInst (Ld r1 r2 off)  = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= withRef off (updateReg r1) (updateReg r2)
+wfInst (St r1 off r2)  = store off <$> typeOfS r1 <*> typeOfS r2 >>= id >>= updateReg r1
+wfInst (Bnz r op)      = match <$> ((typeOfS r >>= cond r) <*> get) <*> (typeOfS op >>= fromCode) >>= id
+wfInst (Unpack _ r op) = typeOfS r >>= fromUnrestricted >> typeOfS op >>= fromExist >>= (shiftContext >>) . (modify (push Neutral) >>) . updateReg r
 
-instance WellFormed Inst where
-  wf (Mov r op)      = typeOf r >>= fromUnrestricted >> typeOf op >>= updateReg r
-  wf (Add r1 r2 op)  = wfArith r1 r2 op
-  wf (Sub r1 r2 op)  = wfArith r1 r2 op
-  wf (Mul r1 r2 op)  = wfArith r1 r2 op
-  wf (Ld r1 r2 off)  = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= withRef off (updateReg r1) (updateReg r2)
-  wf (St r1 off r2)  = store off <$> typeOf r1 <*> typeOf r2 >>= id >>= updateReg r1
-  wf (Bnz r op)      = match <$> ((typeOf r >>= cond r) <*> currentContext) <*> (typeOf op >>= fromCode) >>= id
-  wf (Unpack _ r op) = typeOf r >>= fromUnrestricted >> typeOf op >>= fromExist >>= (shiftContext >>) . localT (push Neutral) . updateReg r
-
-cond :: Reg -> LType -> TypeChecker (Context -> Context)
+cond :: Member (Error TypeError) r => Reg -> LType -> Eff r (Context -> Context)
 cond _ (Type TInt)   = return id
 cond r (Nullable mt) = return $ insert r $ Ref mt
-cond _ ltr           = throwP $ Conditional ltr
+cond _ ltr           = throwErrorP $ Conditional ltr
 
-withRef :: Offset -> (LType -> TypeChecker ()) -> (LType -> TypeChecker ()) -> LType -> TypeChecker ()
+withRef :: Member (Error TypeError) r => Offset -> (LType -> Eff r ()) -> (LType -> Eff r ()) -> LType -> Eff r ()
 withRef Zero f g (Ref (MType x y)) = f x >> g (Ref $ MType (used x) y)
 withRef One  f g (Ref (MType x y)) = f y >> g (Ref $ MType x $ used y)
-withRef _ _ _ lt = throwP $ NonReferenceType lt
+withRef _ _ _ lt = throwErrorP $ NonReferenceType lt
 
 used :: LType -> LType
 used (Type t) = Type t
 used _ = Type Word
 
-store :: Offset -> LType -> LType -> TypeChecker LType
+store :: Member (Error TypeError) r => Offset -> LType -> LType -> Eff r LType
 store Zero (Ref (MType _ y)) x = return $ Ref $ MType x y
 store One  (Ref (MType x _)) y = return $ Ref $ MType x y
-store _ lt _ = throwP $ NonReferenceType lt
+store _ lt _ = throwErrorP $ NonReferenceType lt
 
-wfArith :: Reg -> Reg -> Operand -> TypeChecker ()
-wfArith r1 r2 op = typeOf r1 >>= fromUnrestricted >> typeOf r2 >>= fromInt >> typeOf op >>= fromInt >> updateReg r1 (Type TInt)
+wfArith :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Reg -> Reg -> Operand -> Eff r ()
+wfArith r1 r2 op = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= fromInt >> typeOfS op >>= fromInt >> updateReg r1 (Type TInt)
 
-fromInt :: LType -> TypeChecker ()
+fromInt :: Member (Error TypeError) r => LType -> Eff r ()
 fromInt (Type TInt) = return ()
-fromInt lt = throwP $ NonIntType lt
+fromInt lt = throwErrorP $ NonIntType lt
 
-fromUnrestricted :: LType -> TypeChecker Type
+fromUnrestricted :: Member (Error TypeError) r => LType -> Eff r Type
 fromUnrestricted (Type t) = return t
-fromUnrestricted lt = throwP $ NonUnrestrictedType lt
+fromUnrestricted lt = throwErrorP $ NonUnrestrictedType lt
 
-fromCode :: LType -> TypeChecker Context
+fromCode :: Member (Error TypeError) r => LType -> Eff r Context
 fromCode (Type (Code ctx)) = return ctx
-fromCode lt = throwP $ NonCodeType lt
+fromCode lt = throwErrorP $ NonCodeType lt
 
-match :: Context -> Context -> TypeChecker ()
-match x y = if identical x y then return () else throwP $ ContextMismatch x y
+match :: Member (Error TypeError) r => Context -> Context -> Eff r ()
+match x y = if identical x y then return () else throwErrorP $ ContextMismatch x y
 
 -- | @identical x y@ returns @True@ if and only if the two terms are alpha-equivalent.
 class Identical a where
@@ -268,11 +262,8 @@ instance Identical LType where
 instance Identical MType where
   identical (MType x1 x2) (MType y1 y2) = identical x1 y1 && identical x2 y2
 
-throwT :: TypeError -> TypeChecker a
-throwT = TypeChecker . lift . lift . lift. Left
-
-throwP :: Problem -> TypeChecker a
-throwP = throwT . TypeError []
+throwErrorP :: Member (Error TypeError) r => Problem -> Eff r a
+throwErrorP = throwError . TypeError []
 
 data TypeError = TypeError [Reason] Problem
 
