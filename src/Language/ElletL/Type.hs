@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies  #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Language.ElletL.Type
@@ -24,9 +25,9 @@ import Language.ElletL.Syntax
 
 wfProgram :: Sig -> Heap -> File -> Context -> CodeSec -> Block -> Either TypeError ()
 wfProgram s h f ctx cs b = run $ runError $ runReader s $ do
-  wfCodeSec cs
+  wf cs
   checkFileAndHeap f ctx h
-  evalState (TypeContext []) $ evalState ctx $ wfB b
+  evalState (TypeContext []) $ evalState ctx $ wf b
 
 data Sign
   = Plus
@@ -55,15 +56,18 @@ invert (TypeContext xs) = TypeContext $ map f xs
 -- In the following, "wf" stands for "well-formed".
 
 class WellFormed a where
-  wf :: Members '[Reader TypeContext, Error TypeError] r => a -> Eff r ()
+  type WFEffs a :: [* -> *]
+  wf :: Members (WFEffs a) r => a -> Eff r ()
 
 instance WellFormed Type where
+  type WFEffs Type = '[Reader TypeContext, Error TypeError]
   wf (Forall _ t) = local (push Neutral) $ wf t
   wf TInt = return ()
   wf Word = return ()
   wf (Code ctx) = local invert $ mapM_ wf $ Map.elems $ getContext ctx
 
 instance WellFormed LType where
+  type WFEffs LType = '[Reader TypeContext, Error TypeError]
   wf (TVar i) = ask >>= getSign i >>= f
     where
       f Minus = throwErrorP $ UnexpectedMinus i
@@ -76,6 +80,7 @@ instance WellFormed LType where
   wf (Rec _ lt) = local (push Plus) $ wf lt
 
 instance WellFormed MType where
+  type WFEffs MType = '[Reader TypeContext, Error TypeError]
   wf (MType lt1 lt2) = mapM_ wf [lt1, lt2]
 
 newtype Sig = Sig { getSig :: Map.Map CLab Type }
@@ -83,24 +88,26 @@ newtype Sig = Sig { getSig :: Map.Map CLab Type }
 lookupSig :: CLab -> Sig -> Maybe Type
 lookupSig cl (Sig m) = Map.lookup cl m
 
--- |
--- Note that @wfCodeSec@ checks that the domain of the code section and the
--- domain of the signature coincide.
-wfCodeSec :: Members '[Error TypeError, Reader Sig] r => CodeSec -> Eff r ()
-wfCodeSec x = evalState x $ do
-  m <- asks getSig
-  forM_ (Map.toList m) $ \(cl, t) -> do
-    (ctx, tctx) <- runState (TypeContext []) $ expectCode t
-    runReader (TypeContext []) $ wf t
-    csm <- gets unCodeSec
-    case dropMap cl csm of
-      Found b csm' -> do
-        evalState tctx $ evalState ctx $ wfB b
-        put $ CodeSec csm'
-      Missing -> throwErrorP $ NoSuchCodeLabel cl
-  cs <- get
-  unless (Map.null $ unCodeSec cs) $
-    throwErrorP $ LackingTypeInformation cs
+instance WellFormed CodeSec where
+  type WFEffs CodeSec = '[Error TypeError, Reader Sig]
+
+  -- |
+  -- Note that @wf@ for 'CodeSec' checks that the domain of the code section
+  -- and the domain of the signature coincide.
+  wf x = evalState x $ do
+    m <- asks getSig
+    forM_ (Map.toList m) $ \(cl, t) -> do
+      (ctx, tctx) <- runState (TypeContext []) $ expectCode t
+      runReader (TypeContext []) $ wf t
+      csm <- gets unCodeSec
+      case dropMap cl csm of
+        Found b csm' -> do
+          evalState tctx $ evalState ctx $ wf b
+          put $ CodeSec csm'
+        Missing -> throwErrorP $ NoSuchCodeLabel cl
+    cs <- get
+    unless (Map.null $ unCodeSec cs) $
+      throwErrorP $ LackingTypeInformation cs
 
 expectCode :: (Members '[State TypeContext, Error TypeError] r) => Type -> Eff r Context
 expectCode (Code ctx) = return ctx
@@ -221,22 +228,25 @@ typeOfS x = do
   tctx <- get
   runReader (tctx :: TypeContext) $ typeOf x
 
-wfB :: Members InstEffs r => Block -> Eff r ()
-wfB (Block is t) = mapM_ wfInst is >> wfT t
+instance WellFormed Block where
+  type WFEffs Block = InstEffs
+  wf (Block is t) = mapM_ wf is >> wf t
 
-wfT :: Members InstEffs r => Terminator -> Eff r ()
-wfT (Jmp op) = match <$> get <*> (typeOfS op >>= fromCode) >>= id
-wfT Halt = return ()
+instance WellFormed Terminator where
+  type WFEffs Terminator = InstEffs
+  wf (Jmp op) = match <$> get <*> (typeOfS op >>= fromCode) >>= id
+  wf Halt = return ()
 
-wfInst :: Members InstEffs r => Inst -> Eff r ()
-wfInst (Mov r op)      = typeOfS r >>= fromUnrestricted >> typeOfS op >>= updateReg r
-wfInst (Add r1 r2 op)  = wfArith r1 r2 op
-wfInst (Sub r1 r2 op)  = wfArith r1 r2 op
-wfInst (Mul r1 r2 op)  = wfArith r1 r2 op
-wfInst (Ld r1 r2 off)  = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= withRef off (updateReg r1) (updateReg r2)
-wfInst (St r1 off r2)  = store off <$> typeOfS r1 <*> typeOfS r2 >>= id >>= updateReg r1
-wfInst (Bnz r op)      = match <$> ((typeOfS r >>= cond r) <*> get) <*> (typeOfS op >>= fromCode) >>= id
-wfInst (Unpack _ r op) = typeOfS r >>= fromUnrestricted >> typeOfS op >>= fromExist >>= (shiftContext >>) . (modify (push Neutral) >>) . updateReg r
+instance WellFormed Inst where
+  type WFEffs Inst = InstEffs
+  wf (Mov r op)      = typeOfS r >>= fromUnrestricted >> typeOfS op >>= updateReg r
+  wf (Add r1 r2 op)  = wfArith r1 r2 op
+  wf (Sub r1 r2 op)  = wfArith r1 r2 op
+  wf (Mul r1 r2 op)  = wfArith r1 r2 op
+  wf (Ld r1 r2 off)  = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= withRef off (updateReg r1) (updateReg r2)
+  wf (St r1 off r2)  = store off <$> typeOfS r1 <*> typeOfS r2 >>= id >>= updateReg r1
+  wf (Bnz r op)      = match <$> ((typeOfS r >>= cond r) <*> get) <*> (typeOfS op >>= fromCode) >>= id
+  wf (Unpack _ r op) = typeOfS r >>= fromUnrestricted >> typeOfS op >>= fromExist >>= (shiftContext >>) . (modify (push Neutral) >>) . updateReg r
 
 wfArith :: Members InstEffs r => Reg -> Reg -> Operand -> Eff r ()
 wfArith r1 r2 op = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= fromInt >> typeOfS op >>= fromInt >> updateReg r1 (Type TInt)
