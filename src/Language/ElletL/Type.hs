@@ -89,9 +89,8 @@ wfCodeSec x = evalState x $ do
         put $ CodeSec csm'
       Missing -> throwErrorP $ NoSuchCodeLabel cl
   cs <- get
-  if Map.null $ unCodeSec cs
-    then return ()
-    else throwErrorP $ LackingTypeInformation cs
+  unless (Map.null $ unCodeSec cs) $
+    throwErrorP $ LackingTypeInformation cs
 
 expectCode :: (Members '[State TypeContext, Error TypeError] r) => Type -> Eff r Context
 expectCode (Code ctx) = return ctx
@@ -101,16 +100,14 @@ expectCode t = throwErrorP $ NonCodeLabelType t
 checkFileAndHeap :: Members '[Reader Sig, Error TypeError] r => File -> Context -> Heap -> Eff r ()
 checkFileAndHeap file ctx heap = do
   heap' <- execState heap $ check file ctx
-  if Map.null $ unHeap heap'
-    then return ()
-    else throwErrorP $ UnusedLabels heap'
+  unless (Map.null $ unHeap heap') $
+    throwErrorP $ UnusedLabels heap'
 
 check :: Members '[State Heap, Reader Sig, Error TypeError] r => File -> Context -> Eff r ()
 check file ctx = do
   f <- execState file $ mapM_ checkFile $ Map.toList $ getContext ctx
-  if Map.null $ unFile f
-    then return ()
-    else throwErrorP $ LackingTypeInformationForFile f
+  unless (Map.null $ unFile f) $
+    throwErrorP $ LackingTypeInformationForFile f
 
 checkFile :: Members '[State File, State Heap, Reader Sig, Error TypeError] r => (Reg, LType) -> Eff r ()
 checkFile (r, lt) = do
