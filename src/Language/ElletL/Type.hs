@@ -4,7 +4,9 @@
 {-# LANGUAGE TypeOperators #-}
 
 module Language.ElletL.Type
-  ( Typed(..)
+  ( wfProgram
+  , Sig(..)
+  , Typed(..)
   -- * Errors
   , TypeError(..)
   ) where
@@ -19,6 +21,12 @@ import qualified Data.Map.Lazy as Map
 
 import Language.ElletL.Subst
 import Language.ElletL.Syntax
+
+wfProgram :: Sig -> Heap -> File -> Context -> CodeSec -> Block -> Either TypeError ()
+wfProgram s h f ctx cs b = run $ runError $ runReader s $ do
+  wfCodeSec cs
+  checkFileAndHeap f ctx h
+  evalState (TypeContext []) $ evalState ctx $ wfB b
 
 data Sign
   = Plus
