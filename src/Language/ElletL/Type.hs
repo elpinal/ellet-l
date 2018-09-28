@@ -138,6 +138,7 @@ checkValue (VLab l) lt = useLabel l >>= (`checkHeapValue` lt)
 
 checkHeapValue :: Members '[State Heap, Reader Sig, Error TypeError] r => HVal -> LType -> Eff r ()
 checkHeapValue (HVal v1 v2) (Ref (MType lt1 lt2)) = checkValue v1 lt1 >> checkValue v2 lt2
+checkHeapValue (HVal v1 v2) (Nullable (MType lt1 lt2)) = checkValue v1 lt1 >> checkValue v2 lt2
 checkHeapValue _ lt = throwErrorP $ NonReferenceType lt
 
 data Drop d a
