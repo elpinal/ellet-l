@@ -9,6 +9,7 @@ module Language.ElletL.Type
   , TypeError(..)
   ) where
 
+import Control.Monad
 import Control.Monad.Freer
 import Control.Monad.Freer.Error
 import Control.Monad.Freer.Reader
@@ -72,12 +73,29 @@ newtype Sig = Sig { getSig :: Map.Map CLab Type }
 lookupSig :: CLab -> Sig -> Maybe Type
 lookupSig cl (Sig m) = Map.lookup cl m
 
-wfSig :: Members '[Reader TypeContext, Error TypeError, Reader Sig] r => Eff r ()
-wfSig = ask >>= mapM_ (\t -> expectCode t >> wf t) . Map.elems . getSig
+-- |
+-- Note that @wfCodeSec@ checks that the domain of the code section and the
+-- domain of the signature coincide.
+wfCodeSec :: Members '[Error TypeError, Reader Sig] r => CodeSec -> Eff r ()
+wfCodeSec x = evalState x $ do
+  m <- asks getSig
+  forM_ (Map.toList m) $ \(cl, t) -> do
+    (ctx, tctx) <- runState (TypeContext []) $ expectCode t
+    runReader (TypeContext []) $ wf t
+    csm <- gets unCodeSec
+    case dropMap cl csm of
+      Found b csm' -> do
+        evalState tctx $ evalState ctx $ wfB b
+        put $ CodeSec csm'
+      Missing -> throwErrorP $ NoSuchCodeLabel cl
+  cs <- get
+  if Map.null $ unCodeSec cs
+    then return ()
+    else throwErrorP $ LackingTypeInformation cs
 
-expectCode :: (Member (Error TypeError) r) => Type -> Eff r ()
-expectCode (Code _) = return ()
-expectCode (Forall _ t) = expectCode t
+expectCode :: (Members '[State TypeContext, Error TypeError] r) => Type -> Eff r Context
+expectCode (Code ctx) = return ctx
+expectCode (Forall _ t) = modify (push Neutral) >> expectCode t
 expectCode t = throwErrorP $ NonCodeLabelType t
 
 checkFileAndHeap :: Members '[Reader Sig, Error TypeError] r => File -> Context -> Heap -> Eff r ()
@@ -276,6 +294,7 @@ data Problem
   | NoSuchCodeLabel CLab
 
   | UnusedLabels Heap -- forgetting labels, which contain linear values, is forbidden in the linear type system.
+  | LackingTypeInformation CodeSec
 
   | UnexpectedMinus Int
 
