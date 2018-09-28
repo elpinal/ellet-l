@@ -32,8 +32,10 @@ data Sign
   = Plus
   | Minus
   | Neutral
+  deriving Show
 
 newtype TypeContext = TypeContext { getTypeContext :: [Sign] }
+  deriving Show
 
 getSign :: Member (Error TypeError) r => Int -> TypeContext -> Eff r Sign
 getSign i (TypeContext xs)
@@ -298,6 +300,10 @@ throwErrorP = throwError . TypeError []
 
 data TypeError = TypeError [Reason] Problem
 
+instance Show TypeError where
+  show (TypeError [] p) = show p
+  show (TypeError _ _) = error "error"
+
 data Problem
   = UnboundTypeVariable TypeContext Int
   | UsedOrUnboundLabel Lab -- the label is either used twice (or more), or unbound in the heap.
@@ -326,5 +332,6 @@ data Problem
   | NonReferenceType LType
 
   | IllTypedIntValue Int LType
+  deriving Show
 
 data Reason

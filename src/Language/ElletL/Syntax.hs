@@ -43,10 +43,12 @@ data Operand
   | Pack LType Operand LType -- pack [rep, op] as ty
   | Fold LType Operand -- fold [ty] op
   | Unfold Operand -- unfold op
+  deriving Show
 
 data Offset
   = Zero
   | One
+  deriving Show
 
 data Inst
   = Mov Reg Operand
@@ -57,12 +59,15 @@ data Inst
   | St Reg Offset Reg
   | Bnz Reg Operand
   | Unpack String Reg Operand -- unpack [a, r] op
+  deriving Show
 
 data Terminator
   = Jmp Operand
   | Halt
+  deriving Show
 
 data Block = Block [Inst] Terminator
+  deriving Show
 
 
 newtype Context = Context { getContext :: Map.Map Reg LType }
@@ -115,3 +120,4 @@ mapHeap :: (Map.Map Lab HVal -> Map.Map Lab HVal) -> Heap -> Heap
 mapHeap f = Heap . f . unHeap
 
 newtype CodeSec = CodeSec { unCodeSec :: Map.Map CLab Block }
+  deriving Show
