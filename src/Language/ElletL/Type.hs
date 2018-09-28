@@ -133,11 +133,6 @@ checkInt n lt = throwErrorP $ IllTypedIntValue n lt
 (!?) :: Member (Error TypeError) r => Maybe a -> Problem -> Eff r a
 (!?) m p = maybe (throwErrorP p) return m
 
-typeOfS :: (Typed a, Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r) => a -> Eff r LType
-typeOfS x = do
-  tctx <- get
-  runReader (tctx :: TypeContext) $ typeOf x
-
 class Typed a where
   typeOf :: Members '[Reader TypeContext, State Context, Reader Sig, Error TypeError] r => a -> Eff r LType
 
@@ -184,14 +179,21 @@ updateReg r lt = modify $ insert r lt
 shiftContext :: Member (State Context) r => Eff r ()
 shiftContext = modify $ (shift 1 :: Context -> Context)
 
-wfB :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Block -> Eff r ()
+type InstEffs = '[State TypeContext, State Context, Reader Sig, Error TypeError]
+
+typeOfS :: (Typed a, Members InstEffs r) => a -> Eff r LType
+typeOfS x = do
+  tctx <- get
+  runReader (tctx :: TypeContext) $ typeOf x
+
+wfB :: Members InstEffs r => Block -> Eff r ()
 wfB (Block is t) = mapM_ wfInst is >> wfT t
 
-wfT :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Terminator -> Eff r ()
+wfT :: Members InstEffs r => Terminator -> Eff r ()
 wfT (Jmp op) = match <$> get <*> (typeOfS op >>= fromCode) >>= id
 wfT Halt = return ()
 
-wfInst :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Inst -> Eff r ()
+wfInst :: Members InstEffs r => Inst -> Eff r ()
 wfInst (Mov r op)      = typeOfS r >>= fromUnrestricted >> typeOfS op >>= updateReg r
 wfInst (Add r1 r2 op)  = wfArith r1 r2 op
 wfInst (Sub r1 r2 op)  = wfArith r1 r2 op
@@ -200,6 +202,9 @@ wfInst (Ld r1 r2 off)  = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= withR
 wfInst (St r1 off r2)  = store off <$> typeOfS r1 <*> typeOfS r2 >>= id >>= updateReg r1
 wfInst (Bnz r op)      = match <$> ((typeOfS r >>= cond r) <*> get) <*> (typeOfS op >>= fromCode) >>= id
 wfInst (Unpack _ r op) = typeOfS r >>= fromUnrestricted >> typeOfS op >>= fromExist >>= (shiftContext >>) . (modify (push Neutral) >>) . updateReg r
+
+wfArith :: Members InstEffs r => Reg -> Reg -> Operand -> Eff r ()
+wfArith r1 r2 op = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= fromInt >> typeOfS op >>= fromInt >> updateReg r1 (Type TInt)
 
 cond :: Member (Error TypeError) r => Reg -> LType -> Eff r (Context -> Context)
 cond _ (Type TInt)   = return id
@@ -219,9 +224,6 @@ store :: Member (Error TypeError) r => Offset -> LType -> LType -> Eff r LType
 store Zero (Ref (MType _ y)) x = return $ Ref $ MType x y
 store One  (Ref (MType x _)) y = return $ Ref $ MType x y
 store _ lt _ = throwErrorP $ NonReferenceType lt
-
-wfArith :: Members '[State TypeContext, State Context, Reader Sig, Error TypeError] r => Reg -> Reg -> Operand -> Eff r ()
-wfArith r1 r2 op = typeOfS r1 >>= fromUnrestricted >> typeOfS r2 >>= fromInt >> typeOfS op >>= fromInt >> updateReg r1 (Type TInt)
 
 fromInt :: Member (Error TypeError) r => LType -> Eff r ()
 fromInt (Type TInt) = return ()
