@@ -20,10 +20,6 @@ fromCLab :: MonadThrow m => Val -> Interpreter m CLab
 fromCLab (VCLab cl) = return cl
 fromCLab v = throwI $ ExpectedCLab v
 
-fromInt :: MonadThrow m => Val -> Interpreter m Int
-fromInt (VInt i) = return i
-fromInt v = throwI $ ExpectedInt v
-
 alterCell :: Offset -> Val -> HVal -> HVal
 alterCell Zero v (HVal _ v2) = HVal v v2
 alterCell One v (HVal v1 _) = HVal v1 v
@@ -98,11 +94,15 @@ interp (St r1 off r2) = do
   l <- lookupReg r1 >>= fromLab
   alterCell off <$> lookupReg r2 <*> lookupLab l >>= writeHeap l
 interp (Bnz r op) = do
-  i <- lookupReg r >>= fromInt
-  when (i /= 0) $ do
+  v <- lookupReg r
+  unless (isZero v) $ do
     jmp op >>= interpret
     ContT $ const $ return ()
 interp (Unpack _ r op) = valueOf op >>= writeReg r -- same as Mov.
+
+isZero :: Val -> Bool
+isZero (VInt 0) = True
+isZero _ = False
 
 arith :: MonadThrow m => (Int -> Int -> Int) -> Val -> Val -> Interpreter m Val
 arith f (VInt i1) (VInt i2) = return $ VInt $ i1 `f` i2
