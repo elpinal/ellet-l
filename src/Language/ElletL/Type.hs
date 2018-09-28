@@ -106,12 +106,18 @@ checkFileAndHeap file ctx heap = do
     else throwErrorP $ UnusedLabels heap'
 
 check :: Members '[State Heap, Reader Sig, Error TypeError] r => File -> Context -> Eff r ()
-check file ctx = mapM_ (checkContext ctx) $ Map.toList $ unFile file
+check file ctx = do
+  f <- execState file $ mapM_ checkFile $ Map.toList $ getContext ctx
+  if Map.null $ unFile f
+    then return ()
+    else throwErrorP $ LackingTypeInformationForFile f
 
-checkContext :: Members '[State Heap, Reader Sig, Error TypeError] r => Context -> (Reg, Val) -> Eff r ()
-checkContext ctx (r, v) = do
-  lt <- lookupContext r ctx !? NoSuchRegister r
-  checkValue v lt
+checkFile :: Members '[State File, State Heap, Reader Sig, Error TypeError] r => (Reg, LType) -> Eff r ()
+checkFile (r, lt) = do
+  File m <- get
+  case dropMap r m of
+    Found v m' -> checkValue v lt >> put (File m')
+    Missing -> throwErrorP $ NoSuchRegister r
 
 checkValue :: Members '[State Heap, Reader Sig, Error TypeError] r => Val -> LType -> Eff r ()
 checkValue (VInt n) lt = checkInt n lt
@@ -295,6 +301,7 @@ data Problem
 
   | UnusedLabels Heap -- forgetting labels, which contain linear values, is forbidden in the linear type system.
   | LackingTypeInformation CodeSec
+  | LackingTypeInformationForFile File
 
   | UnexpectedMinus Int
 
