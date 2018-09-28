@@ -131,7 +131,9 @@ checkValue (VInt n) lt = checkInt n lt
 checkValue (VCLab cl) lt = do
   sig <- ask
   t <- lookupSig cl sig !? NoSuchCodeLabel cl
-  mustIdentical (Type t) lt
+  case lt of
+    Type Word -> return ()
+    _ -> mustIdentical (Type t) lt
 checkValue (VLab l) lt = useLabel l >>= (`checkHeapValue` lt)
 
 checkHeapValue :: Members '[State Heap, Reader Sig, Error TypeError] r => HVal -> LType -> Eff r ()
@@ -159,6 +161,7 @@ useLabel l = do
 checkInt :: Members '[Error TypeError] r => Int -> LType -> Eff r ()
 checkInt 0 (Nullable mt) = runReader (TypeContext []) $ wf mt
 checkInt _ (Type TInt) = return ()
+checkInt _ (Type Word) = return ()
 checkInt n lt = throwErrorP $ IllTypedIntValue n lt
 
 (!?) :: Member (Error TypeError) r => Maybe a -> Problem -> Eff r a
