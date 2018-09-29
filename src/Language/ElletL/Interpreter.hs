@@ -10,6 +10,7 @@ import Control.Monad.Trans.Cont
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State
 import qualified Data.Map.Lazy as Map
+import Data.Word
 
 import Language.ElletL.Syntax
 
@@ -80,7 +81,7 @@ runInterpreter i c e = (`runReaderT` c) $ (`execStateT` e) $ evalContT i
 -- indicates that the program is interpreted successfully
 -- (regardless of the existence of the "exit" code block).
 -- Moreover, the halt instruction indicates that memory runs out.
--- Integer arithmetic can induce overflow in the sense of Haskell's Int type.
+-- Integer arithmetic can induce overflow in the sense of Haskell's Word32 type.
 interpret :: MonadThrow m => Block -> Interpreter m ()
 interpret (Block is t) = mapM_ interp is >> terminator t >>= interpret
 
@@ -104,7 +105,7 @@ isZero :: Val -> Bool
 isZero (VInt 0) = True
 isZero _ = False
 
-arith :: MonadThrow m => (Int -> Int -> Int) -> Val -> Val -> Interpreter m Val
+arith :: MonadThrow m => (Word32 -> Word32 -> Word32) -> Val -> Val -> Interpreter m Val
 arith f (VInt i1) (VInt i2) = return $ VInt $ i1 `f` i2
 arith _ (VInt _) v = throwI $ ExpectedInt v
 arith _ v (VInt _) = throwI $ ExpectedInt v

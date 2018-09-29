@@ -28,8 +28,10 @@ module Language.ElletL.Syntax
   ) where
 
 import qualified Data.Map.Lazy as Map
+import Data.Word
 
-newtype Reg = Reg Int
+-- The maximum number of registers is limited to 256.
+newtype Reg = Reg Word8
   deriving (Eq, Ord, Show)
 
 newtype CLab = CLab String
@@ -37,7 +39,7 @@ newtype CLab = CLab String
 
 data Operand
   = Register Reg
-  | Int Int
+  | Int Word32
   | Func CLab
   | TApp Operand LType -- op [ty]
   | Pack LType Operand LType -- pack [rep, op] as ty
@@ -99,7 +101,7 @@ newtype Lab = Lab String
   deriving (Eq, Ord, Show)
 
 data Val
-  = VInt Int
+  = VInt Word32
   | VLab Lab
   | VCLab CLab
   deriving Show

@@ -19,6 +19,7 @@ import Control.Monad.Freer.Reader
 import Control.Monad.Freer.State
 import Data.Functor.Classes
 import qualified Data.Map.Lazy as Map
+import Data.Word
 
 import Language.ElletL.Subst
 import Language.ElletL.Syntax
@@ -166,7 +167,7 @@ useLabel l = do
     Found hv heap -> put heap >> return hv
     Missing -> throwErrorP $ UsedOrUnboundLabel l
 
-checkInt :: Members '[Error TypeError] r => Int -> LType -> Eff r ()
+checkInt :: Members '[Error TypeError] r => Word32 -> LType -> Eff r ()
 checkInt 0 (Nullable mt) = runReader (TypeContext []) $ wf mt
 checkInt _ (Type TInt) = return ()
 checkInt _ (Type Word) = return ()
@@ -345,7 +346,7 @@ data Problem
   | NonCodeLabelType Type -- expected @Type (Forall ... (Code ctx))@
   | NonReferenceType LType
 
-  | IllTypedIntValue Int LType
+  | IllTypedIntValue Word32 LType
   deriving Show
 
 data Reason
